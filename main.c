@@ -34,6 +34,7 @@ struct SharedMemory {
 	sem_t Pmutex;
 	int productCount;
 } * sharedMem;
+int sharedMemKey;
 
 void initializeSemaphores() {
 	sem_init(&(sharedMem->BYmutex), 1, 1);
@@ -47,14 +48,22 @@ void initializeSemaphores() {
 	sem_init(&(sharedMem->Pmutex), 1, 1);
 }
 
-void initializeSharedMemory() {
+int initializeSharedMemory() {
+	sharedMemKey = shmget(IPC_PRIVATE, sizeof(struct SharedMemory), IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR);
+	if(sharedMemKey == -1)
+		return 0;
 
+	sharedMem = (struct SharedSegment*)shmat(sharedMemKey, NULL, 0);
+
+	if(sharedMem == (struct SharedSegment*)-1)
+		return 0;
+
+	memset(sharedMem, 0, sizeof(struct SharedMemory));
+
+	return 1;
 }
 
-void initialize() {
-	initializeSemaphores();
-	initializeSharedMemory();
-
+void initializeData() {
 	sharedMem->BY->first = 0;
 	sharedMem->BY->last = 0;
 
@@ -70,19 +79,26 @@ void initialize() {
 	sharedMem->productCount = 0;
 }
 
+int produceItem() {
+	return rand() % 10;
+}
+
 void putItemIntoLine(int item, struct AssemblyLine * line) {
 	line->last++;
+	line->last = line->last % 5;
 	line->values[line->last] = item;
 }
 
 int removeItemFromLine(struct AssemblyLine * line) {
 	line->first++;
-	return line->values[line->first-1];
+	int result = line->values[line->first-1];
+	line->first = line->first % 5;
+	return result;
 }
 
 void assembleItem(int itemY, int itemZ) {
 	sharedMem->productCount++;
-	printf("Item No. %d; Item value: %d", sharedMem->productCount, itemY*itemZ);
+	printf("Item No. %d; Item value: %d\n", sharedMem->productCount, 10*itemY+itemZ);
 }
 
 void producer(char type) {
@@ -103,6 +119,10 @@ void producer(char type) {
 				sem_post(&(sharedMem->BYmutex));
 			sem_post(&(sharedMem->BYfillCount));
 		}
+		sem_wait(&(sharedMem->Pmutex));
+			if (sharedMem->productCount >= TARGET_PRODUCTION)
+				return;
+		sem_post(&(sharedMem->Pmutex));
 	}
 }
 
@@ -114,20 +134,22 @@ void assembler() {
 		if (itemY == -1) {
 			sem_wait(&(sharedMem->BYfillCount));
 				sem_wait(&(sharedMem->BYmutex));
-					int item = removeItemFromLine();
+					itemY = removeItemFromLine(sharedMem->BY);
 				sem_post(&(sharedMem->BYmutex));
 			sem_post(&(sharedMem->BYemptyCount));
 		}
 		else if (itemZ == -1) {
 			sem_wait(&(sharedMem->BZfillCount));
 				sem_wait(&(sharedMem->BZmutex));
-					int item = removeItemFromLine();
+					itemZ = removeItemFromLine(sharedMem->BZ);
 				sem_post(&(sharedMem->BZmutex));
 			sem_post(&(sharedMem->BZemptyCount));
 		}
 		else {
 			sem_wait(&(sharedMem->Pmutex));
 				assembleItem(itemY, itemZ);
+				if (sharedMem->productCount >= TARGET_PRODUCTION)
+					return;
 			sem_post(&(sharedMem->Pmutex));
 
 			itemY = -1;
@@ -136,16 +158,47 @@ void assembler() {
     }
 }
 
-int main(void) {
+int main(int argc, char * argv[]) {
+
 	int m, n, p, r, s, t;
-	m = 1;
-	n = 1;
-	p = 1;
-	r = 1;
-	s = 1;
-	t = 1;
+	if (argc != 7) {
+		m = 1;
+		n = 1;
+		p = 1;
+		r = 1;
+		s = 1;
+		t = 1;
+	}
+	else
+	{
+		m = atoi(argv[1]);
+		n = atoi(argv[2]);
+		p = atoi(argv[3]);
+		r = atoi(argv[4]);
+		s = atoi(argv[5]);
+		t = atoi(argv[6]);
+	}
 
+	srand(time(NULL));
 
+	int i, child_pid;
+	for(i=0; i<m; i++)
+		if((child_pid = fork()) == 0)
+			return producer('M');
+		else
+			printf("Created robot type M, pid: %d\n",child_pid);
+
+	for(i=0; i<n; i++)
+		if((child_pid = fork()) == 0)
+			return producer('N');
+		else
+			printf("Created robot type N, pid: %d\n",child_pid);
+
+	for(i=0; i<p; i++)
+		if((child_pid = fork()) == 0)
+			return assembler();
+		else
+			printf("Created robot type P, pid: %d\n",child_pid);
 
 	return 0;
 }
