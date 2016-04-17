@@ -48,14 +48,24 @@ void initializeSemaphores() {
 	sem_init(&(sharedMem->Pmutex), 1, 1);
 }
 
+void destroySemaphores() {
+	sem_destroy(&(sharedMem->BYmutex));
+	sem_destroy(&(sharedMem->BYfillCount));
+	sem_destroy(&(sharedMem->BYemptyCount));
+	sem_destroy(&(sharedMem->BZmutex));
+	sem_destroy(&(sharedMem->BZfillCount));
+	sem_destroy(&(sharedMem->BZemptyCount));
+	sem_destroy(&(sharedMem->Pmutex));
+}
+
 int initializeSharedMemory() {
 	sharedMemKey = shmget(IPC_PRIVATE, sizeof(struct SharedMemory), IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR);
 	if(sharedMemKey == -1)
 		return 0;
 
-	sharedMem = (struct SharedSegment*)shmat(sharedMemKey, NULL, 0);
+	sharedMem = (struct SharedMemory*)shmat(sharedMemKey, NULL, 0);
 
-	if(sharedMem == (struct SharedSegment*)-1)
+	if(sharedMem == (struct SharedMemory*)-1)
 		return 0;
 
 	memset(sharedMem, 0, sizeof(struct SharedMemory));
@@ -63,19 +73,24 @@ int initializeSharedMemory() {
 	return 1;
 }
 
-void initializeData() {
+void freeSharedMemory() {
+	shmdt(sharedMem);
+	shmctl(sharedMemKey, IPC_RMID, NULL);
+}
+
+void initializeData() {printf("debug 0\n");
 	sharedMem->BY->first = 0;
 	sharedMem->BY->last = 0;
 
 	sharedMem->BZ->first = 0;
 	sharedMem->BZ->last = 0;
-
+printf("debug 1\n");
 	int i;
 	for (i = 0; i < 5; i++) {
 		sharedMem->BY->values[i] = 0;
 		sharedMem->BZ->values[i] = 0;
 	}
-
+printf("debug 2\n");
 	sharedMem->productCount = 0;
 }
 
@@ -101,61 +116,79 @@ void assembleItem(int itemY, int itemZ) {
 	printf("Item No. %d; Item value: %d\n", sharedMem->productCount, 10*itemY+itemZ);
 }
 
-void producer(char type) {
+int producer(char type) {
+	printf("Starting robot type %c\n", type);
+
 	while (1) {
 		int item = produceItem();
+		printf("Locked here type %c - step 1\n", type);
 
-		if (type == 'N') {
-			sem_wait(&(sharedMem->BYemptyCount));
-				sem_wait(&(sharedMem->BYmutex));
+		if (type == 'N') {printf("Locked here type %c - step 2\n", type);
+			sem_wait(&(sharedMem->BYemptyCount));printf("Locked here type %c - step 3\n", type);
+				sem_wait(&(sharedMem->BYmutex));printf("Locked here type %c - step 4\n", type);
+					printf("Putting item %d to line BY\n", item);
 					putItemIntoLine(item, sharedMem->BY);
 				sem_post(&(sharedMem->BYmutex));
 			sem_post(&(sharedMem->BYfillCount));
 		}
-		else if (type == 'M') {
-			sem_wait(&(sharedMem->BYemptyCount));
-				sem_wait(&(sharedMem->BYmutex));
+		else if (type == 'M') {printf("Locked here type %c - step 2\n", type);
+			sem_wait(&(sharedMem->BYemptyCount));printf("Locked here type %c - step 3\n", type);
+				sem_wait(&(sharedMem->BYmutex));printf("Locked here type %c - step 4\n", type);
+					printf("Putting item %d to line BZ\n", item);
 					putItemIntoLine(item, sharedMem->BZ);
 				sem_post(&(sharedMem->BYmutex));
 			sem_post(&(sharedMem->BYfillCount));
 		}
 		sem_wait(&(sharedMem->Pmutex));
-			if (sharedMem->productCount >= TARGET_PRODUCTION)
-				return;
+			if (sharedMem->productCount >= TARGET_PRODUCTION) {
+				printf("Terminating robot type %c\n", type);
+				return 0;
+			}
 		sem_post(&(sharedMem->Pmutex));
 	}
 }
 
-void assembler() {
+int assembler() {
 	int itemY = -1;
 	int itemZ = -1;
 
+	printf("Starting robot type P\n");
+
 	while (1) {
-		if (itemY == -1) {
-			sem_wait(&(sharedMem->BYfillCount));
+		printf("Locked here type P - step 1\n");
+		
+		if (itemY == -1) {printf("Locked here type P - step 1.5\n");
+			sem_wait(&(sharedMem->BYfillCount));printf("Locked here type P - step 1.57\n");
 				sem_wait(&(sharedMem->BYmutex));
+				printf("Locked here type P - step 1.625\n");
 					itemY = removeItemFromLine(sharedMem->BY);
+					printf("Locked here type P - step 1.7\n");
 				sem_post(&(sharedMem->BYmutex));
 			sem_post(&(sharedMem->BYemptyCount));
+			printf("Locked here type P - step 1.75\n");
 		}
-		else if (itemZ == -1) {
+		else if (itemZ == -1) {printf("Locked here type P - step 2\n");
 			sem_wait(&(sharedMem->BZfillCount));
 				sem_wait(&(sharedMem->BZmutex));
 					itemZ = removeItemFromLine(sharedMem->BZ);
 				sem_post(&(sharedMem->BZmutex));
 			sem_post(&(sharedMem->BZemptyCount));
 		}
-		else {
+		else {printf("Locked here type P - step 3\n");
 			sem_wait(&(sharedMem->Pmutex));
 				assembleItem(itemY, itemZ);
-				if (sharedMem->productCount >= TARGET_PRODUCTION)
-					return;
+				if (sharedMem->productCount >= TARGET_PRODUCTION) {
+					printf("Terminating robot type P\n");
+					return 0;
+				}
 			sem_post(&(sharedMem->Pmutex));
 
 			itemY = -1;
 			itemZ = -1;
 		}
+		printf("Locked here type P - step 4s\n");
     }
+    printf("Locked here type P - step 5\n");
 }
 
 int main(int argc, char * argv[]) {
@@ -179,13 +212,24 @@ int main(int argc, char * argv[]) {
 		t = atoi(argv[6]);
 	}
 
+	printf("Initializing shared memory\n");
+	initializeSharedMemory();
+
+	printf("Initializing semaphores\n");
+	initializeSemaphores();
+	
+	printf("Initializing data\n");
+	initializeData();
+	
+	printf("Starting production\n");
+
 	srand(time(NULL));
 
-	int i, child_pid;
+	int i, child_pid, status;
 	for(i=0; i<m; i++)
 		if((child_pid = fork()) == 0)
 			return producer('M');
-		else
+		else 
 			printf("Created robot type M, pid: %d\n",child_pid);
 
 	for(i=0; i<n; i++)
@@ -200,5 +244,10 @@ int main(int argc, char * argv[]) {
 		else
 			printf("Created robot type P, pid: %d\n",child_pid);
 
+	//wait(&status);
+
+	printf("Terminating\n");
+	freeSharedMemory();
+	destroySemaphores();
 	return 0;
 }
